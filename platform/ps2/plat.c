@@ -97,8 +97,11 @@ int plat_get_skin_dir(char *dst, int len)
 /* top directory for rom images */
 int plat_get_data_dir(char *dst, int len)
 {
-    getcwd(dst, len);
-    return strlen(dst);
+    if (len > 5)
+		strcpy(dst, "roms/roms_gens");
+	else if (len > 0)
+		*dst = 0;
+	return strlen(dst);
 }
 
 /* check if path is a directory */
