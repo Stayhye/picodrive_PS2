@@ -14,11 +14,11 @@ include ../../config.mak
 readme.txt: ../../tools/textfilter ../base_readme.txt ../../ChangeLog
 	../../tools/textfilter ../base_readme.txt $@ PS2
 
-PicoDrive: ../../picodrive
+PicoDrive: ../../picodrive.elf
 	$(STRIP) $^ -o $@
 
 
-rel: PicoDrive readme.txt ../game_def.cfg
+rel: PicoDrive.elf readme.txt ../game_def.cfg
 	mkdir -p out/PicoDrive/skin/ out/bin_to_cso_mp3
 	cp $^ out/PicoDrive/
 	cp ../../skin/* out/PicoDrive/skin/
