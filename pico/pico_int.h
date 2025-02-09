@@ -657,7 +657,8 @@ struct Pico32x
   unsigned short pwm_p[2];       // pwm pos in fifo
   unsigned int pwm_cycle_p;      // pwm play cursor (32x cycles)
   unsigned int hint_counter;
-  unsigned int reserved[5];
+  unsigned int sync_line;
+  unsigned int reserved[4];
 };
 
 struct Pico32xMem
@@ -1018,6 +1019,9 @@ void PicoMemSetupMS(void);
 void PicoStateLoadedMS(void);
 void PicoFrameMS(void);
 void PicoFrameDrawOnlyMS(void);
+int PicoPlayTape(const char *fname);
+int PicoRecordTape(const char *fname);
+void PicoCloseTape(void);
 #else
 #define PicoPowerMS()
 #define PicoResetMS()
@@ -1025,6 +1029,9 @@ void PicoFrameDrawOnlyMS(void);
 #define PicoStateLoadedMS()
 #define PicoFrameMS()
 #define PicoFrameDrawOnlyMS()
+#define PicoPlayTape(f) 1
+#define PicoRecordTape(f) 1
+#define PicoCloseTape()
 #endif
 
 // 32x/32x.c
@@ -1045,6 +1052,7 @@ void Pico32xStartup(void);
 void Pico32xShutdown(void);
 void PicoUnload32x(void);
 void PicoFrame32x(void);
+void Pico32xDrawSync(SH2 *sh2);
 void Pico32xStateLoaded(int is_early);
 void Pico32xPrepare(void);
 void p32x_sync_sh2s(unsigned int m68k_target);

@@ -1683,7 +1683,7 @@ void *retro_get_memory_data(unsigned type)
          if ((PicoIn.AHW & PAHW_MCD) && Pico.romsize == 0 &&
                !(PicoIn.opt & POPT_EN_MCD_RAMCART))
             data = Pico_mcd->bram;
-         else
+         else // TODO: handle copying to/from bram somewhere
             data = Pico.sv.data;
          break;
       case RETRO_MEMORY_SYSTEM_RAM:
@@ -1714,9 +1714,9 @@ size_t retro_get_memory_size(unsigned type)
    switch(type)
    {
       case RETRO_MEMORY_SAVE_RAM:
-         if (PicoIn.AHW & PAHW_MCD)
+         if ((PicoIn.AHW & PAHW_MCD) && Pico.romsize == 0)
          {
-            if (Pico.romsize == 0 && PicoIn.opt & POPT_EN_MCD_RAMCART)
+            if (PicoIn.opt & POPT_EN_MCD_RAMCART)
                return 0x12000;
             else /* bram */
                return 0x2000;
@@ -2272,7 +2272,7 @@ void run_events_pico(unsigned int events)
             emu_status_msg("Input: Pen on Pad");
         }
     }
-    if (events & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT)) {
+    if (events & (1 << RETRO_DEVICE_ID_JOYPAD_Y)) {
         if (pico_inp_mode == 1) {
             pico_inp_mode = 0;
             emu_status_msg("Input: D-Pad");
@@ -2365,7 +2365,7 @@ void retro_run(void)
    if (PicoIn.AHW == PAHW_PICO) {
        uint16_t ev = input[0] &
              ((1 << RETRO_DEVICE_ID_JOYPAD_L) | (1 << RETRO_DEVICE_ID_JOYPAD_R) |
-              (1 << RETRO_DEVICE_ID_JOYPAD_X) | (1 << RETRO_DEVICE_ID_JOYPAD_SELECT) |
+              (1 << RETRO_DEVICE_ID_JOYPAD_X) | (1 << RETRO_DEVICE_ID_JOYPAD_Y) |
               (1 << RETRO_DEVICE_ID_JOYPAD_START));
        uint16_t new_ev = ev & ~pico_events;
        pico_events = ev;

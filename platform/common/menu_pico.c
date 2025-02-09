@@ -427,11 +427,16 @@ static void kbd_draw(struct key *desc[], int shift, int xoffs, int yoffs, struct
 	int i, j;
 	struct key *key;
 
+	if (g_menuscreen_w >= 480)
+		xoffs -= 50;
 	for (i = 0; desc[i]; i++) {
 		for (j = 0, key = &desc[i][j]; key->lower; j++, key++) {
 			int color = (key != hi ? PXMAKE(0xa0, 0xa0, 0xa0) :
 						 PXMAKE(0xff, 0xff, 0xff));
 			char *text = (shift ? key->upper : key->lower);
+			if (g_menuscreen_w >= 480)
+			text_out16_(xoffs + key->xpos*me_mfont_w, yoffs + i*me_mfont_h, text, color);
+			else
 			smalltext_out16(xoffs + key->xpos*me_sfont_w, yoffs + i*me_sfont_h, text, color);
 		}
 	}
@@ -524,11 +529,11 @@ int key_config_kbd_loop(int id, int keys)
 			for (is_down = 1; is_down; )
 				kc = in_update_keycode(&bind_dev_id, &is_down, NULL, -1);
 
-			in_bind_kbd_key(dev, bc, -1);
+			in_bind_kbd_key(dev, bc, 0);
 			in_bind_kbd_key(bind_dev_id, kc, kbd[keyy][keyx].key);
 		}
 		if (inp & PBTN_MA2) {
-			in_bind_kbd_key(dev, bc, -1);
+			in_bind_kbd_key(dev, bc, 0);
 		}
 	}
 
@@ -1412,6 +1417,52 @@ static void menu_main_draw_status(void)
 
 static menu_entry e_menu_main[];
 
+static int tape_record_bit;
+static const char *tape_record_exts[] = { ".wav", ".bit" };
+
+static const char *mgn_loadtape(int id, int *offs)
+{
+	return "";
+}
+
+static int mh_loadtape(int id, int keys)
+{
+	if (keys & (PBTN_LEFT|PBTN_RIGHT)) { // multi choice
+		int x = me_id2offset(e_menu_main, MA_MAIN_SAVE_TAPE);
+		e_menu_main[x].enabled = !e_menu_main[x].enabled;
+		return 0;
+	}
+	if (keys & PBTN_MOK) {
+		static const char *rom_exts[] = { "bit", "wav", NULL };
+		const char *ret_name;
+
+		ret_name = menu_loop_romsel_d(rom_fname_loaded,
+				sizeof(rom_fname_loaded), rom_exts, NULL, menu_draw_prep);
+		if (ret_name == NULL)
+			return 0;
+
+		return emu_play_tape(ret_name);
+	}
+	return 1;
+}
+
+static const char *mgn_savetape(int id, int *offs)
+{
+	return tape_record_exts[!!tape_record_bit];
+}
+
+static int mh_savetape(int id, int keys)
+{
+	if (keys & (PBTN_LEFT|PBTN_RIGHT)) { // multi choice
+		tape_record_bit = !tape_record_bit;
+		return 0;
+	}
+	if (keys & PBTN_MOK) {
+		return emu_record_tape(tape_record_exts[!!tape_record_bit]);
+	}
+	return 1;
+}
+
 static int main_menu_handler(int id, int keys)
 {
 	const char *ret_name;
@@ -1552,6 +1603,8 @@ static menu_entry e_menu_main[] =
 	mee_handler_id("Reset game",         MA_MAIN_RESET_GAME,  main_menu_handler),
 	mee_handler_id("Change CD",          MA_MAIN_CHANGE_CD,   main_menu_handler),
 	mee_cust_s_h  ("Storyware page",     MA_MAIN_PICO_PAGE, 0,mh_picopage, mgn_picopage, NULL),
+	mee_cust_s_h  ("Load tape",          MA_MAIN_LOAD_TAPE, 0,mh_loadtape, mgn_loadtape, NULL),
+	mee_cust_s_h  ("Save tape",          MA_MAIN_SAVE_TAPE, 0,mh_savetape, mgn_savetape, NULL),
 	mee_handler_id("Patches / GameGenie",MA_MAIN_PATCHES,     main_menu_handler),
 	mee_handler_id("Load new game",      MA_MAIN_LOAD_ROM,    main_menu_handler),
 	mee_handler   ("Change options",                          menu_loop_options),
@@ -1572,6 +1625,8 @@ void menu_loop(void)
 	me_enable(e_menu_main, MA_MAIN_LOAD_STATE,  PicoGameLoaded);
 	me_enable(e_menu_main, MA_MAIN_RESET_GAME,  PicoGameLoaded);
 	me_enable(e_menu_main, MA_MAIN_CHANGE_CD,   PicoIn.AHW & PAHW_MCD);
+	me_enable(e_menu_main, MA_MAIN_LOAD_TAPE,   PicoIn.AHW & PAHW_SC);
+	me_enable(e_menu_main, MA_MAIN_SAVE_TAPE,   0);
 	me_enable(e_menu_main, MA_MAIN_PICO_PAGE,   PicoIn.AHW & PAHW_PICO);
 	me_enable(e_menu_main, MA_MAIN_PATCHES,     PicoPatches != NULL);
 	me_enable(e_menu_main, MA_OPT_SAVECFG_GAME, PicoGameLoaded);

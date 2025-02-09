@@ -604,6 +604,31 @@ int emu_swap_cd(const char *fname)
 	return 1;
 }
 
+int emu_play_tape(const char *fname)
+{
+	int ret;
+
+	ret = PicoPlayTape(fname);
+	if (ret != 0) {
+		menu_update_msg("loading tape failed");
+		return 0;
+	}
+	return 1;
+}
+
+int emu_record_tape(const char *ext)
+{
+	int ret;
+
+	fname_ext(static_buff, sizeof(static_buff), "tape"PATH_SEP, ext, rom_fname_loaded);
+	ret = PicoRecordTape(static_buff);
+	if (ret != 0) {
+		menu_update_msg("recording tape failed");
+		return 0;
+	}
+	return 1;
+}
+
 // <base dir><end>
 void emu_make_path(char *buff, const char *end, int size)
 {
@@ -1288,7 +1313,7 @@ static void run_events_ui(unsigned int which)
 	{
 		if (! (PicoIn.opt & POPT_EN_KBD)) {
 			kbd_mode = 0;
-			emu_status_msg("No keyboard");
+			emu_status_msg("No keyboard configured");
 		} else {
 			kbd_mode = !kbd_mode;
 			emu_status_msg("Keyboard %s", kbd_mode ? "on" : "off");
@@ -1449,6 +1474,7 @@ void emu_init(void)
 	mkdir_path(path, pos, "mds");
 	mkdir_path(path, pos, "srm");
 	mkdir_path(path, pos, "brm");
+	mkdir_path(path, pos, "tape");
 	mkdir_path(path, pos, "cfg");
 
 	pprof_init();
@@ -1548,8 +1574,8 @@ static void emu_loop_prep(void)
 
 	vkbd = NULL;
 	if (currentConfig.keyboard == 2) {
-		if (PicoIn.AHW & PAHW_SMS) vkbd = &vkbd_sc3000;
-		else if (PicoIn.AHW & PAHW_PICO) vkbd = &vkbd_pico;
+		if (PicoIn.AHW & PAHW_SMS) vkbd = vkbd_init(0);
+		else if (PicoIn.AHW & PAHW_PICO) vkbd = vkbd_init(1);
 	}
 	PicoIn.opt &= ~POPT_EN_KBD;
 	if (((PicoIn.AHW & PAHW_PICO) || (PicoIn.AHW & PAHW_SC)) && currentConfig.keyboard)
