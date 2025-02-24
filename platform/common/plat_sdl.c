@@ -376,6 +376,8 @@ void plat_video_menu_update(void)
 		g_menuscreen_pp = g_menuscreen_w;
 	else
 		g_menuscreen_pp = plat_sdl_screen->pitch / 2;
+
+	resize_buffers();
 }
 
 void plat_video_menu_enter(int is_rom_loaded)
