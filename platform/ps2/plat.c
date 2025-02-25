@@ -80,7 +80,7 @@ int plat_get_root_dir(char *dst, int len)
 {
  	getcwd(dst, len);
     // We need to append / at the end
-    strcpy(dst, "mc0:/PICO/";
+    strcpy(dst, "mc0:/PICO/)";
     return strlen(dst);
 }
 
