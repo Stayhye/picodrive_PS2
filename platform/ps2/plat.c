@@ -81,7 +81,7 @@ void plat_early_init(void) {
 //}
 
 /* base directory for configuration and save files */
-revert to this line: `int plat_get_root_dir(char *dst, int len)`
+int plat_get_root_dir(char *dst, int len)
 
 {    
     dst = "mc0:/PICO/";
