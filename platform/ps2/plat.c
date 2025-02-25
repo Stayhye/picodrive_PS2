@@ -77,10 +77,11 @@ void plat_early_init(void) {
 
 /* base directory for configuration and save files */
 int plat_get_root_dir(char *dst, int len)
-{
+
+{	fioMkdir("mc0:PICO");
  	getcwd(dst, len);
     // We need to append / at the end
-    fioMkdir("mc0:PICO");
+    
     strcpy(dst, "mc0:/PICO/");
     return strlen(dst);
 }
