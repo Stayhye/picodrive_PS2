@@ -16,7 +16,7 @@ readme.txt: ../../tools/textfilter ../base_readme.txt ../../ChangeLog
 PicoDrive: ../../picodrive
 	$(STRIP) $^ -o $@
 
-rel:    readme.txt ../game_def.cfg
+rel:    picodrive readme.txt ../game_def.cfg
 	mkdir -p out/PicoDrive/skin/ out/bin_to_cso_mp3
 	cp $^ out/PicoDrive/
 	cp ../../skin/* out/PicoDrive/skin/
