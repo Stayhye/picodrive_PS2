@@ -75,8 +75,9 @@ void plat_early_init(void) {
 #endif
 }
 
-int make_directory(char *name) {
-  mkdir(PICO);
+int mkdir (const char *_path, mode_t __mode) {
+  
+	  mkdir( "mc0:/PICO")
 }
 
 /* base directory for configuration and save files */
