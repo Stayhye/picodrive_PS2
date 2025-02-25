@@ -166,13 +166,13 @@ void emu_status_msg(const char *format, ...)
 }
 
 static const char * const biosfiles_us[] = {
-	"us_scd2_9306", "SegaCDBIOS9303", "us_scd1_9210", "bios_CD_U"
+	"USA"
 };
 static const char * const biosfiles_eu[] = {
-	"eu_mcd2_9306", "eu_mcd2_9303", "eu_mcd1_9210", "bios_CD_E"
+	"EU"
 };
 static const char * const biosfiles_jp[] = {
-	"jp_mcd2_921222", "jp_mcd1_9112", "jp_mcd1_9111", "bios_CD_J"
+	"JAP"
 };
 
 static const char *find_bios(int *region, const char *cd_fname)
