@@ -87,7 +87,7 @@ int main(int argc, char *argv[])
 
 	plat_init();
 	menu_init();
-	fileXioMkdir("mc0:/PICO", 0777);
+	
 	emu_prep_defconfig(); // depends on input
 	emu_read_config(NULL, 0);
 
