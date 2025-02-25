@@ -81,12 +81,10 @@ void plat_early_init(void) {
 //}
 
 /* base directory for configuration and save files */
-int plat_get_root_dir(char *dst, int len)
+int plat_get_root_dir(char *dst)
 
-{	
- 	getcwd(dst, len);
-    // We need to append / at the end
-    strcpy(dst, "mc0:/PICO/");
+{    
+    dst = "mc0:/PICO/";
     return strlen(dst);
 }
 
