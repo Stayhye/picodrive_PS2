@@ -14,7 +14,7 @@ include ../../config.mak
 readme.txt: ../../tools/textfilter ../base_readme.txt ../../ChangeLog
 	../../tools/textfilter ../base_readme.txt $@ PS2
 
-PicoDrive: ../../PICO_000.01
+PICO_000.01: ../../PICO_000.01
 	$(STRIP) $^ -o $@
 
 
