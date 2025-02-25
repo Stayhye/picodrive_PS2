@@ -72,6 +72,7 @@ void plat_early_init(void) {
     init_drivers();
 #if defined(LOG_TO_FILE)
 	log_init();
+	mkdir( "mc0:/PICO");
 #endif
 }
 
