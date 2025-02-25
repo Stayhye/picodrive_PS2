@@ -72,22 +72,21 @@ void plat_early_init(void) {
     init_drivers();
 #if defined(LOG_TO_FILE)
 	log_init();
-	mkdir( "mc0:/PICO");
 #endif
 }
 
-//int mkdir (const char *_path, mode_t __mode) {
-  
-	 // mkdir( "mc0:/PICO", 0777);
-//}
 
 /* base directory for configuration and save files */
 int plat_get_root_dir(char *dst, int len)
 
 {	
- 	getcwd(dst, len);
-    // We need to append / at the end
     strcpy(dst, "mc0:/PICO/");
+    DIR *dir;
+    if ((dir = opendir(dst))) 
+        closedir(dir);
+    else
+        mkdir(dst,0777);
+
     return strlen(dst);
 }
 
