@@ -50,7 +50,7 @@ static void bgm_thread_func(void *arg) {
 
     FILE *f = fopen("menu.adp", "rb");
     if (!f) f = fopen("MENU.ADP", "rb");
-    if (!f) f = fopen("cdfs:/MENU.ADP;1", "rb");
+    if (!f) f = fopen("cdfs:/SKIN/MENU.ADP;1", "rb");
     if (!f) f = fopen("mc0:/PICO/MENU.ADP", "rb");
 
     if (!f) {
