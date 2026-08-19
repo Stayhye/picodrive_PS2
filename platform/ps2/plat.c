@@ -1,6 +1,6 @@
 /*
  * PicoDrive platform interface for PS2
- * (Modified for High Performance WAV Streaming)
+ * (Optimized strictly for Native ADPCM Streaming)
  */
 
 #include <stdio.h>
@@ -25,13 +25,12 @@
 #include <audsrv.h>
 #include <libcdvd.h>
 
-/* Kill the warning for ALIGNED by ensuring it is undefined before the port header */
 #ifdef ALIGNED
 #undef ALIGNED
 #endif
 #include "../libpicofe/plat.h"
+#include "../../pico/pico_int.h"
 
-/* Embedded IRX Symbols */
 extern unsigned char audsrv_irx[];
 extern unsigned int size_audsrv_irx;
 extern unsigned char libsd_irx[];
@@ -41,39 +40,48 @@ extern void *_gp;
 
 static int bgm_running = 0;
 static int bgm_tid = -1;
-static unsigned char bgm_stack[0x4000] __attribute__((aligned(16)));
+static unsigned char bgm_stack[0x8000] __attribute__((aligned(16)));
 
 static int sound_rates[] = { 11025, 22050, 44100, -1 };
 struct plat_target plat_target = { .sound_rates = sound_rates };
 
 static void bgm_thread_func(void *arg) {
-    FILE *f = fopen("menu.wav", "rb");
-    if (!f) f = fopen("MENU.WAV", "rb");
-    if (!f) f = fopen("cdfs:/MENU.WAV;1", "rb");
-    
+    /* Strict .adp search only */
+    FILE *f = fopen("menu.adp", "rb");
+    if (!f) f = fopen("MENU.ADP", "rb");
+    if (!f) f = fopen("cdfs:/MENU.ADP;1", "rb");
+
     if (!f) {
         bgm_tid = -1;
+        bgm_running = 0;
         ExitDeleteThread();
         return;
     }
 
-    fseek(f, 44, SEEK_SET); 
-    static char audio_buf[8192];
+    /* Seek past RIFF ADPCM header to start of raw audio frame stream */
+    fseek(f, 60, SEEK_SET);
+
+    /* Set up audsrv for ADPCM 44.1kHz Stereo playback */
+    struct audsrv_fmt_t adp_fmt;
+    adp_fmt.bits = 16;
+    adp_fmt.freq = 44100;
+    adp_fmt.channels = 2;
+    audsrv_set_format(&adp_fmt);
+
+    /* 2KB buffer - lightweight stream footprint prevents filesystem contention */
+    static char audio_buf[2048]; 
 
     while (bgm_running) {
-        if (!bgm_running) break;
-
         int bytes_read = (int)fread(audio_buf, 1, sizeof(audio_buf), f);
         if (bytes_read <= 0) {
-            fseek(f, 44, SEEK_SET); 
+            fseek(f, 60, SEEK_SET); // Loop audio back to data start
             continue;
         }
 
         audsrv_wait_audio(bytes_read);
+        if (!bgm_running) break;
+        
         audsrv_play_audio(audio_buf, bytes_read);
-
-        /* Standard yield */
-        usleep(100);
     }
 
     fclose(f);
@@ -82,7 +90,7 @@ static void bgm_thread_func(void *arg) {
 }
 
 void plat_start_bgm(void) {
-    if (bgm_running) return;
+    if (bgm_running || bgm_tid >= 0) return;
     
     ee_thread_t thread;
     memset(&thread, 0, sizeof(ee_thread_t));
@@ -91,7 +99,7 @@ void plat_start_bgm(void) {
     thread.func = (void *)bgm_thread_func;
     thread.stack = bgm_stack;
     thread.stack_size = sizeof(bgm_stack);
-    thread.initial_priority = 100; 
+    thread.initial_priority = 75; // Low priority so UI stays responsive
     thread.gp_reg = &_gp;
 
     bgm_tid = CreateThread(&thread);
@@ -106,13 +114,11 @@ void plat_stop_bgm(void) {
     if (!bgm_running) return;
     bgm_running = 0;
     
-    int timeout = 3000; 
+    int timeout = 50; 
     while (bgm_tid != -1 && timeout-- > 0) {
-        /* usleep is consistently supported in this toolchain environment */
-        usleep(500);
+        usleep(1000);
     }
-
-    /* Stop CDVD drive to prevent "Bad Sector" errors during ROM load */
+    
     sceCdStop();
     sceCdSync(0);
 }
