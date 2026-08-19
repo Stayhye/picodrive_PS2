@@ -1,6 +1,6 @@
 /*
  * PicoDrive platform interface for PS2
- * (Non-blocking, BGM Engine with UI-First Startup Delay)
+ * (Real-Time ADPCM Decoder for BGM Streaming)
  */
 
 #include <stdio.h>
@@ -46,12 +46,47 @@ static unsigned char bgm_stack[0x10000] __attribute__((aligned(16)));
 static int sound_rates[] = { 11025, 22050, 44100, -1 };
 struct plat_target plat_target = { .sound_rates = sound_rates };
 
+/* -------------------------------------------------------------------- */
+/* PS2 SPU2 ADPCM Decoder Coefficients                                 */
+/* -------------------------------------------------------------------- */
+static const double f[5][2] = {
+    { 0.0, 0.0 },
+    { 60.0 / 64.0, 0.0 },
+    { 115.0 / 64.0, -52.0 / 64.0 },
+    { 98.0 / 64.0, -55.0 / 64.0 },
+    { 122.0 / 64.0, -60.0 / 64.0 }
+};
+
+static void decode_adpcm_block(const unsigned char *chunk, short *out_pcm, double *s1, double *s2) {
+    int predict_nr = chunk[0] >> 4;
+    int shift_factor = chunk[0] & 0xf;
+
+    if (predict_nr > 4) predict_nr = 0;
+
+    for (int i = 0; i < 28; i++) {
+        unsigned char byte = chunk[2 + (i >> 1)];
+        int sample = (i & 1) ? (byte >> 4) : (byte & 0x0f);
+        if (sample >= 8) sample -= 16;
+
+        double dsample = (double)(sample << (12 - shift_factor));
+        double s_0 = dsample + (*s1 * f[predict_nr][0]) + (*s2 * f[predict_nr][1]);
+
+        *s2 = *s1;
+        *s1 = s_0;
+
+        int pcm = (int)s_0;
+        if (pcm > 32767) pcm = 32767;
+        if (pcm < -32768) pcm = -32768;
+
+        out_pcm[i] = (short)pcm;
+    }
+}
+
+/* -------------------------------------------------------------------- */
+/* BGM Thread                                                           */
+/* -------------------------------------------------------------------- */
 static void bgm_thread_func(void *arg) {
-    /* 
-     * Wait 500ms before doing any audio or disk ops.
-     * This ensures the main menu system has completely finished loading
-     * and rendered its first frame onto the screen.
-     */
+    /* 1. Wait 500ms so menu UI finishes loading and rendering */
     usleep(500000);
 
     if (!bgm_running) {
@@ -60,7 +95,7 @@ static void bgm_thread_func(void *arg) {
         return;
     }
 
-    /* Initialize audsrv after menu setup is done */
+    /* 2. Initialize audio subsystem if not ready */
     if (!audsrv_initialized) {
         if (audsrv_init() != 0) {
             bgm_tid = -1;
@@ -72,9 +107,10 @@ static void bgm_thread_func(void *arg) {
         audsrv_initialized = 1;
     }
 
-    FILE *f = fopen("menu.adp", "rb");
-    if (!f) f = fopen("MENU.ADP", "rb");
-    if (!f) f = fopen("cdfs:/SKIN/MENU.ADP;1", "rb");
+    /* 3. Open ADP File */
+    FILE *f = fopen("cdfs:/SKIN/MENU.ADP;1", "rb");
+    if (!f) f = fopen("cdfs:/SKIN/MENU.ADP", "rb");
+    if (!f) f = fopen("cdfs:/skin/menu.adp", "rb");
     if (!f) f = fopen("mc0:/PICO/MENU.ADP", "rb");
 
     if (!f) {
@@ -84,31 +120,39 @@ static void bgm_thread_func(void *arg) {
         return;
     }
 
+    /* Set target format: 44.1kHz Mono/Stereo PCM for audsrv */
     struct audsrv_fmt_t adp_fmt;
     adp_fmt.bits = 16;
     adp_fmt.freq = 44100;
-    adp_fmt.channels = 2;
+    adp_fmt.channels = 1; // Standard ADP/VAG mono channel
     audsrv_set_format(&adp_fmt);
 
-    /* 4KB buffer for smooth streaming without underruns */
-    static char audio_buf[4096]; 
+    static unsigned char raw_adpcm[16];
+    static short pcm_out[28];
+    double s1 = 0.0, s2 = 0.0;
 
     while (bgm_running) {
-        /* Prevent IOP ring-buffer overflows */
         if (audsrv_queued() > 16384) {
-            usleep(5000);
+            usleep(2000);
             continue;
         }
 
-        int bytes_read = (int)fread(audio_buf, 1, sizeof(audio_buf), f);
-        if (bytes_read <= 0) {
+        /* Read one 16-byte ADPCM frame */
+        int bytes_read = (int)fread(raw_adpcm, 1, 16, f);
+        if (bytes_read < 16) {
             fseek(f, 0, SEEK_SET);
+            s1 = 0.0;
+            s2 = 0.0;
             continue;
         }
 
         if (!bgm_running) break;
 
-        audsrv_play_audio(audio_buf, bytes_read);
+        /* Decode ADPCM block to PCM */
+        decode_adpcm_block(raw_adpcm, pcm_out, &s1, &s2);
+
+        /* Send uncompressed PCM to audsrv */
+        audsrv_play_audio((char *)pcm_out, sizeof(pcm_out));
     }
 
     fclose(f);
@@ -126,7 +170,7 @@ void plat_start_bgm(void) {
     thread.func = (void *)bgm_thread_func;
     thread.stack = bgm_stack;
     thread.stack_size = sizeof(bgm_stack);
-    thread.initial_priority = 48; // Prioritize audio stream over background tasks
+    thread.initial_priority = 48;
     thread.gp_reg = &_gp;
 
     bgm_tid = CreateThread(&thread);
