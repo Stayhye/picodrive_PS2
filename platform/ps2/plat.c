@@ -1,6 +1,6 @@
 /*
  * PicoDrive platform interface for PS2
- * (Rate-Locked 44.1kHz ADPCM BGM Engine)
+ * (Real-Time ADPCM BGM Engine - Safe Path Resolver)
  */
 
 #include <stdio.h>
@@ -47,7 +47,7 @@ static int sound_rates[] = { 11025, 22050, 44100, -1 };
 struct plat_target plat_target = { .sound_rates = sound_rates };
 
 /* -------------------------------------------------------------------- */
-/* PS2 SPU2 ADPCM Decoder Coefficients                                 */
+/* SPU2 ADPCM Coefficients                                             */
 /* -------------------------------------------------------------------- */
 static const double f[5][2] = {
     { 0.0, 0.0 },
@@ -82,11 +82,37 @@ static void decode_adpcm_frame(const unsigned char *chunk, short *out_pcm, doubl
     }
 }
 
+/* Helper function to find existing ADP file across CD and Memory Card */
+static FILE *open_menu_adp(void) {
+    static const char *paths[] = {
+        "cdfs:/SKIN/MENU.ADP;1",
+        "cdfs:/SKIN/MENU.ADP",
+        "cdfs:/skin/menu.adp;1",
+        "cdfs:/skin/menu.adp",
+        "cdfs:/MENU.ADP;1",
+        "cdfs:/MENU.ADP",
+        "mc0:/PICO/MENU.ADP",
+        "mc1:/PICO/MENU.ADP",
+        NULL
+    };
+
+    for (int i = 0; paths[i] != NULL; i++) {
+        FILE *f = fopen(paths[i], "rb");
+        if (f) {
+            printf("[BGM] Found audio file at: %s\n", paths[i]);
+            return f;
+        }
+    }
+
+    printf("[BGM] ERROR: Could not find MENU.ADP in any skin directory.\n");
+    return NULL;
+}
+
 /* -------------------------------------------------------------------- */
 /* BGM Thread                                                           */
 /* -------------------------------------------------------------------- */
 static void bgm_thread_func(void *arg) {
-    /* 1. Startup Delay for UI */
+    /* Wait 1.5s so disc spin-up and UI finish */
     usleep(1500000);
 
     if (!bgm_running) {
@@ -95,7 +121,7 @@ static void bgm_thread_func(void *arg) {
         return;
     }
 
-    /* 2. Initialize audsrv asynchronously */
+    /* Initialize audsrv asynchronously */
     if (!audsrv_initialized) {
         if (audsrv_init() != 0) {
             bgm_tid = -1;
@@ -107,11 +133,7 @@ static void bgm_thread_func(void *arg) {
         audsrv_initialized = 1;
     }
 
-    FILE *f = fopen("cdfs:/SKIN/MENU.ADP;1", "rb");
-    if (!f) f = fopen("cdfs:/SKIN/MENU.ADP", "rb");
-    if (!f) f = fopen("cdfs:/skin/menu.adp", "rb");
-    if (!f) f = fopen("mc0:/PICO/MENU.ADP", "rb");
-
+    FILE *f = open_menu_adp();
     if (!f) {
         bgm_tid = -1;
         bgm_running = 0;
@@ -119,36 +141,33 @@ static void bgm_thread_func(void *arg) {
         return;
     }
 
-    /* 
-     * Target Format: 44.1kHz Mono 16-bit PCM.
-     * Note: Standard PS2 menu tracks are 44100Hz.
-     */
+    /* Target format: 44.1kHz Mono 16-bit PCM */
+    int sample_rate = 44100;
     struct audsrv_fmt_t adp_fmt;
     adp_fmt.bits = 16;
-    adp_fmt.freq = 44100; 
+    adp_fmt.freq = sample_rate; 
     adp_fmt.channels = 1;
     audsrv_set_format(&adp_fmt);
 
-    /* Check for VAG/ADP header and skip it to reach audio data */
+    /* Check and skip VAG header if present */
     char header_check[4];
     if (fread(header_check, 1, 4, f) == 4) {
         if (memcmp(header_check, "VAGp", 4) == 0) {
-            fseek(f, 48, SEEK_SET); // Skip standard VAG header
+            fseek(f, 48, SEEK_SET); // Skip 48-byte VAG header
         } else {
-            fseek(f, 0, SEEK_SET);  // Headerless ADP file
+            fseek(f, 0, SEEK_SET);  // Raw ADP file
         }
     }
 
-    #define ADPCM_BLOCK_SIZE 2048 // 128 frames (3584 PCM samples)
+    #define ADPCM_BLOCK_SIZE 2048 // 128 frames
     static unsigned char raw_adpcm[ADPCM_BLOCK_SIZE];
     static short pcm_buffer[128 * 28];
     double s1 = 0.0, s2 = 0.0;
 
     while (bgm_running) {
-        /* Read 2KB chunk of raw ADPCM frames */
         int bytes_read = (int)fread(raw_adpcm, 1, ADPCM_BLOCK_SIZE, f);
         if (bytes_read < 16) {
-            fseek(f, 48, SEEK_SET); // Loop back past header
+            fseek(f, 48, SEEK_SET); // Loop track
             s1 = 0.0;
             s2 = 0.0;
             continue;
@@ -162,14 +181,14 @@ static void bgm_thread_func(void *arg) {
             decode_adpcm_frame(&raw_adpcm[i * 16], &pcm_buffer[i * 28], &s1, &s2);
         }
 
-        int pcm_bytes = frames * 28 * sizeof(short);
+        int total_samples = frames * 28;
+        int pcm_bytes = total_samples * sizeof(short);
 
-        /* Hardware rate limiter: wait until audsrv has buffer space */
-        audsrv_wait_audio(pcm_bytes);
-
-        if (!bgm_running) break;
+        /* Real-time speed control based on sample count */
+        unsigned int chunk_duration_us = (unsigned int)(((long long)total_samples * 1000000LL) / sample_rate);
 
         audsrv_play_audio((char *)pcm_buffer, pcm_bytes);
+        usleep(chunk_duration_us);
     }
 
     fclose(f);
