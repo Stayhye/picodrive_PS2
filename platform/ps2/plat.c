@@ -1,6 +1,6 @@
 /*
  * PicoDrive platform interface for PS2
- * (Optimized strictly for Native ADPCM Streaming)
+ * (Strict ADP Streaming with Debug Logging)
  */
 
 #include <stdio.h>
@@ -46,44 +46,56 @@ static int sound_rates[] = { 11025, 22050, 44100, -1 };
 struct plat_target plat_target = { .sound_rates = sound_rates };
 
 static void bgm_thread_func(void *arg) {
-    /* Strict .adp search only */
+    printf("[BGM] Thread started, searching for MENU.ADP...\n");
+
     FILE *f = fopen("menu.adp", "rb");
     if (!f) f = fopen("MENU.ADP", "rb");
     if (!f) f = fopen("cdfs:/MENU.ADP;1", "rb");
+    if (!f) f = fopen("mc0:/PICO/MENU.ADP", "rb");
 
     if (!f) {
+        printf("[BGM] ERROR: Could not find menu.adp or MENU.ADP on cdfs/mc0!\n");
         bgm_tid = -1;
         bgm_running = 0;
         ExitDeleteThread();
         return;
     }
 
-    /* Seek past RIFF ADPCM header to start of raw audio frame stream */
-    fseek(f, 60, SEEK_SET);
+    printf("[BGM] Successfully opened MENU.ADP!\n");
 
-    /* Set up audsrv for ADPCM 44.1kHz Stereo playback */
+    /* Set up audsrv for standard playback (44.1kHz, 16-bit, Stereo) */
     struct audsrv_fmt_t adp_fmt;
     adp_fmt.bits = 16;
     adp_fmt.freq = 44100;
     adp_fmt.channels = 2;
-    audsrv_set_format(&adp_fmt);
+    if (audsrv_set_format(&adp_fmt) != 0) {
+        printf("[BGM] ERROR: audsrv_set_format failed!\n");
+    }
 
-    /* 2KB buffer - lightweight stream footprint prevents filesystem contention */
-    static char audio_buf[2048]; 
+    static char audio_buf[4096]; 
 
     while (bgm_running) {
         int bytes_read = (int)fread(audio_buf, 1, sizeof(audio_buf), f);
         if (bytes_read <= 0) {
-            fseek(f, 60, SEEK_SET); // Loop audio back to data start
+            printf("[BGM] End of file reached, looping...\n");
+            fseek(f, 0, SEEK_SET); // Loop from beginning of file
             continue;
         }
 
-        audsrv_wait_audio(bytes_read);
+        int ret = audsrv_wait_audio(bytes_read);
+        if (ret < 0) {
+            printf("[BGM] audsrv_wait_audio error: %d\n", ret);
+        }
+
         if (!bgm_running) break;
         
-        audsrv_play_audio(audio_buf, bytes_read);
+        int played = audsrv_play_audio(audio_buf, bytes_read);
+        if (played < 0) {
+            printf("[BGM] audsrv_play_audio error: %d\n", played);
+        }
     }
 
+    printf("[BGM] Stopping thread and closing file.\n");
     fclose(f);
     bgm_tid = -1;
     ExitDeleteThread();
@@ -99,13 +111,14 @@ void plat_start_bgm(void) {
     thread.func = (void *)bgm_thread_func;
     thread.stack = bgm_stack;
     thread.stack_size = sizeof(bgm_stack);
-    thread.initial_priority = 75; // Low priority so UI stays responsive
+    thread.initial_priority = 75;
     thread.gp_reg = &_gp;
 
     bgm_tid = CreateThread(&thread);
     if (bgm_tid >= 0) {
         StartThread(bgm_tid, NULL);
     } else {
+        printf("[BGM] Failed to create thread!\n");
         bgm_running = 0;
     }
 }
