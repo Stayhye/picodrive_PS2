@@ -1,6 +1,6 @@
 /*
  * PicoDrive platform interface for PS2
- * (Rate-Locked & UI-Delayed ADPCM BGM Engine)
+ * (Rate-Locked 44.1kHz ADPCM BGM Engine)
  */
 
 #include <stdio.h>
@@ -71,8 +71,8 @@ static void decode_adpcm_frame(const unsigned char *chunk, short *out_pcm, doubl
         double dsample = (double)(sample << (12 - shift_factor));
         double s_0 = dsample + (*s1 * f[predict_nr][0]) + (*s2 * f[predict_nr][1]);
 
-        *s2 = *s1;
-        *s1 = s_0;
+        *s1 = *s2;
+        *s2 = s_0;
 
         int pcm = (int)s_0;
         if (pcm > 32767) pcm = 32767;
@@ -86,10 +86,7 @@ static void decode_adpcm_frame(const unsigned char *chunk, short *out_pcm, doubl
 /* BGM Thread                                                           */
 /* -------------------------------------------------------------------- */
 static void bgm_thread_func(void *arg) {
-    /* 
-     * Wait 1.5 seconds (1,500,000 us) to ensure UI and graphics systems 
-     * are completely initialized and rendered before starting BGM.
-     */
+    /* 1. Startup Delay for UI */
     usleep(1500000);
 
     if (!bgm_running) {
@@ -98,7 +95,7 @@ static void bgm_thread_func(void *arg) {
         return;
     }
 
-    /* Initialize audsrv asynchronously */
+    /* 2. Initialize audsrv asynchronously */
     if (!audsrv_initialized) {
         if (audsrv_init() != 0) {
             bgm_tid = -1;
@@ -122,12 +119,25 @@ static void bgm_thread_func(void *arg) {
         return;
     }
 
-    /* Target format: 22.05kHz Mono 16-bit PCM */
+    /* 
+     * Target Format: 44.1kHz Mono 16-bit PCM.
+     * Note: Standard PS2 menu tracks are 44100Hz.
+     */
     struct audsrv_fmt_t adp_fmt;
     adp_fmt.bits = 16;
-    adp_fmt.freq = 22050; // Set to 44100 if audio sounds too deep/slow
+    adp_fmt.freq = 44100; 
     adp_fmt.channels = 1;
     audsrv_set_format(&adp_fmt);
+
+    /* Check for VAG/ADP header and skip it to reach audio data */
+    char header_check[4];
+    if (fread(header_check, 1, 4, f) == 4) {
+        if (memcmp(header_check, "VAGp", 4) == 0) {
+            fseek(f, 48, SEEK_SET); // Skip standard VAG header
+        } else {
+            fseek(f, 0, SEEK_SET);  // Headerless ADP file
+        }
+    }
 
     #define ADPCM_BLOCK_SIZE 2048 // 128 frames (3584 PCM samples)
     static unsigned char raw_adpcm[ADPCM_BLOCK_SIZE];
@@ -138,7 +148,7 @@ static void bgm_thread_func(void *arg) {
         /* Read 2KB chunk of raw ADPCM frames */
         int bytes_read = (int)fread(raw_adpcm, 1, ADPCM_BLOCK_SIZE, f);
         if (bytes_read < 16) {
-            fseek(f, 0, SEEK_SET);
+            fseek(f, 48, SEEK_SET); // Loop back past header
             s1 = 0.0;
             s2 = 0.0;
             continue;
@@ -154,7 +164,7 @@ static void bgm_thread_func(void *arg) {
 
         int pcm_bytes = frames * 28 * sizeof(short);
 
-        /* Hardware rate limiter: block until audsrv has space for buffer */
+        /* Hardware rate limiter: wait until audsrv has buffer space */
         audsrv_wait_audio(pcm_bytes);
 
         if (!bgm_running) break;
