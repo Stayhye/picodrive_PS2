@@ -1,6 +1,6 @@
 /*
  * PicoDrive platform interface for PS2
- * (Real-Time ADPCM Decoder with Rate-Controlled BGM Engine)
+ * (Rate-Locked & UI-Delayed ADPCM BGM Engine)
  */
 
 #include <stdio.h>
@@ -86,8 +86,11 @@ static void decode_adpcm_frame(const unsigned char *chunk, short *out_pcm, doubl
 /* BGM Thread                                                           */
 /* -------------------------------------------------------------------- */
 static void bgm_thread_func(void *arg) {
-    /* 1. Wait 500ms so menu UI finishes loading and rendering */
-    usleep(500000);
+    /* 
+     * Wait 1.5 seconds (1,500,000 us) to ensure UI and graphics systems 
+     * are completely initialized and rendered before starting BGM.
+     */
+    usleep(1500000);
 
     if (!bgm_running) {
         bgm_tid = -1;
@@ -95,7 +98,7 @@ static void bgm_thread_func(void *arg) {
         return;
     }
 
-    /* 2. Initialize audio subsystem if not ready */
+    /* Initialize audsrv asynchronously */
     if (!audsrv_initialized) {
         if (audsrv_init() != 0) {
             bgm_tid = -1;
@@ -107,7 +110,6 @@ static void bgm_thread_func(void *arg) {
         audsrv_initialized = 1;
     }
 
-    /* 3. Open ADP File */
     FILE *f = fopen("cdfs:/SKIN/MENU.ADP;1", "rb");
     if (!f) f = fopen("cdfs:/SKIN/MENU.ADP", "rb");
     if (!f) f = fopen("cdfs:/skin/menu.adp", "rb");
@@ -120,10 +122,10 @@ static void bgm_thread_func(void *arg) {
         return;
     }
 
-    /* Target format: 22.05kHz Mono 16-bit PCM (Standard ADP Rate) */
+    /* Target format: 22.05kHz Mono 16-bit PCM */
     struct audsrv_fmt_t adp_fmt;
     adp_fmt.bits = 16;
-    adp_fmt.freq = 22050; // Change to 44100 if track becomes too slow
+    adp_fmt.freq = 22050; // Set to 44100 if audio sounds too deep/slow
     adp_fmt.channels = 1;
     audsrv_set_format(&adp_fmt);
 
@@ -133,11 +135,6 @@ static void bgm_thread_func(void *arg) {
     double s1 = 0.0, s2 = 0.0;
 
     while (bgm_running) {
-        if (audsrv_queued() > 16384) {
-            usleep(5000);
-            continue;
-        }
-
         /* Read 2KB chunk of raw ADPCM frames */
         int bytes_read = (int)fread(raw_adpcm, 1, ADPCM_BLOCK_SIZE, f);
         if (bytes_read < 16) {
@@ -149,14 +146,20 @@ static void bgm_thread_func(void *arg) {
 
         if (!bgm_running) break;
 
-        /* Decode all ADPCM frames in the chunk to PCM */
+        /* Decode ADPCM frames to PCM */
         int frames = bytes_read / 16;
         for (int i = 0; i < frames; i++) {
             decode_adpcm_frame(&raw_adpcm[i * 16], &pcm_buffer[i * 28], &s1, &s2);
         }
 
-        /* Stream full batch to audsrv */
-        audsrv_play_audio((char *)pcm_buffer, frames * 28 * sizeof(short));
+        int pcm_bytes = frames * 28 * sizeof(short);
+
+        /* Hardware rate limiter: block until audsrv has space for buffer */
+        audsrv_wait_audio(pcm_bytes);
+
+        if (!bgm_running) break;
+
+        audsrv_play_audio((char *)pcm_buffer, pcm_bytes);
     }
 
     fclose(f);
