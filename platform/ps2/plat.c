@@ -1,6 +1,6 @@
 /*
  * PicoDrive platform interface for PS2
- * (Non-blocking, Non-stuttering BGM Engine)
+ * (Non-blocking, BGM Engine with UI-First Startup Delay)
  */
 
 #include <stdio.h>
@@ -47,7 +47,20 @@ static int sound_rates[] = { 11025, 22050, 44100, -1 };
 struct plat_target plat_target = { .sound_rates = sound_rates };
 
 static void bgm_thread_func(void *arg) {
-    /* Initialize audsrv asynchronously inside the thread so boot isn't delayed */
+    /* 
+     * Wait 500ms before doing any audio or disk ops.
+     * This ensures the main menu system has completely finished loading
+     * and rendered its first frame onto the screen.
+     */
+    usleep(500000);
+
+    if (!bgm_running) {
+        bgm_tid = -1;
+        ExitDeleteThread();
+        return;
+    }
+
+    /* Initialize audsrv after menu setup is done */
     if (!audsrv_initialized) {
         if (audsrv_init() != 0) {
             bgm_tid = -1;
@@ -81,9 +94,9 @@ static void bgm_thread_func(void *arg) {
     static char audio_buf[4096]; 
 
     while (bgm_running) {
-        /* Check queued audio room to prevent blocking calls that stutter */
+        /* Prevent IOP ring-buffer overflows */
         if (audsrv_queued() > 16384) {
-            usleep(5000); // Sleep briefly if ring buffer is full
+            usleep(5000);
             continue;
         }
 
@@ -113,7 +126,7 @@ void plat_start_bgm(void) {
     thread.func = (void *)bgm_thread_func;
     thread.stack = bgm_stack;
     thread.stack_size = sizeof(bgm_stack);
-    thread.initial_priority = 48; // High priority thread prevents stuttering
+    thread.initial_priority = 48; // Prioritize audio stream over background tasks
     thread.gp_reg = &_gp;
 
     bgm_tid = CreateThread(&thread);
@@ -165,8 +178,6 @@ void plat_early_init(void) {
     int ret;
     SifExecModuleBuffer(libsd_irx, size_libsd_irx, 0, NULL, &ret);
     SifExecModuleBuffer(audsrv_irx, size_audsrv_irx, 0, NULL, &ret);
-    
-    /* audsrv_init() moved to background thread to eliminate 2-minute boot lag */
 }
 
 int plat_get_root_dir(char *dst, int len) {    
