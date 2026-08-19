@@ -1,6 +1,6 @@
 /*
  * PicoDrive platform interface for PS2
- * (Strict ADP Streaming with Debug Logging)
+ * (Non-blocking, Non-stuttering BGM Engine)
  */
 
 #include <stdio.h>
@@ -40,13 +40,24 @@ extern void *_gp;
 
 static int bgm_running = 0;
 static int bgm_tid = -1;
-static unsigned char bgm_stack[0x8000] __attribute__((aligned(16)));
+static int audsrv_initialized = 0;
+static unsigned char bgm_stack[0x10000] __attribute__((aligned(16)));
 
 static int sound_rates[] = { 11025, 22050, 44100, -1 };
 struct plat_target plat_target = { .sound_rates = sound_rates };
 
 static void bgm_thread_func(void *arg) {
-    printf("[BGM] Thread started, searching for MENU.ADP...\n");
+    /* Initialize audsrv asynchronously inside the thread so boot isn't delayed */
+    if (!audsrv_initialized) {
+        if (audsrv_init() != 0) {
+            bgm_tid = -1;
+            bgm_running = 0;
+            ExitDeleteThread();
+            return;
+        }
+        audsrv_set_volume(MAX_VOLUME);
+        audsrv_initialized = 1;
+    }
 
     FILE *f = fopen("menu.adp", "rb");
     if (!f) f = fopen("MENU.ADP", "rb");
@@ -54,48 +65,39 @@ static void bgm_thread_func(void *arg) {
     if (!f) f = fopen("mc0:/PICO/MENU.ADP", "rb");
 
     if (!f) {
-        printf("[BGM] ERROR: Could not find menu.adp or MENU.ADP on cdfs/mc0!\n");
         bgm_tid = -1;
         bgm_running = 0;
         ExitDeleteThread();
         return;
     }
 
-    printf("[BGM] Successfully opened MENU.ADP!\n");
-
-    /* Set up audsrv for standard playback (44.1kHz, 16-bit, Stereo) */
     struct audsrv_fmt_t adp_fmt;
     adp_fmt.bits = 16;
     adp_fmt.freq = 44100;
     adp_fmt.channels = 2;
-    if (audsrv_set_format(&adp_fmt) != 0) {
-        printf("[BGM] ERROR: audsrv_set_format failed!\n");
-    }
+    audsrv_set_format(&adp_fmt);
 
+    /* 4KB buffer for smooth streaming without underruns */
     static char audio_buf[4096]; 
 
     while (bgm_running) {
-        int bytes_read = (int)fread(audio_buf, 1, sizeof(audio_buf), f);
-        if (bytes_read <= 0) {
-            printf("[BGM] End of file reached, looping...\n");
-            fseek(f, 0, SEEK_SET); // Loop from beginning of file
+        /* Check queued audio room to prevent blocking calls that stutter */
+        if (audsrv_queued() > 16384) {
+            usleep(5000); // Sleep briefly if ring buffer is full
             continue;
         }
 
-        int ret = audsrv_wait_audio(bytes_read);
-        if (ret < 0) {
-            printf("[BGM] audsrv_wait_audio error: %d\n", ret);
+        int bytes_read = (int)fread(audio_buf, 1, sizeof(audio_buf), f);
+        if (bytes_read <= 0) {
+            fseek(f, 0, SEEK_SET);
+            continue;
         }
 
         if (!bgm_running) break;
-        
-        int played = audsrv_play_audio(audio_buf, bytes_read);
-        if (played < 0) {
-            printf("[BGM] audsrv_play_audio error: %d\n", played);
-        }
+
+        audsrv_play_audio(audio_buf, bytes_read);
     }
 
-    printf("[BGM] Stopping thread and closing file.\n");
     fclose(f);
     bgm_tid = -1;
     ExitDeleteThread();
@@ -111,14 +113,13 @@ void plat_start_bgm(void) {
     thread.func = (void *)bgm_thread_func;
     thread.stack = bgm_stack;
     thread.stack_size = sizeof(bgm_stack);
-    thread.initial_priority = 75;
+    thread.initial_priority = 48; // High priority thread prevents stuttering
     thread.gp_reg = &_gp;
 
     bgm_tid = CreateThread(&thread);
     if (bgm_tid >= 0) {
         StartThread(bgm_tid, NULL);
     } else {
-        printf("[BGM] Failed to create thread!\n");
         bgm_running = 0;
     }
 }
@@ -151,7 +152,7 @@ int plat_target_init(void) { return 0; }
 
 void plat_target_finish(void) {
     plat_stop_bgm();
-    audsrv_quit();
+    if (audsrv_initialized) audsrv_quit();
     deinit_ps2_filesystem_driver();
 }
 
@@ -165,11 +166,7 @@ void plat_early_init(void) {
     SifExecModuleBuffer(libsd_irx, size_libsd_irx, 0, NULL, &ret);
     SifExecModuleBuffer(audsrv_irx, size_audsrv_irx, 0, NULL, &ret);
     
-    if (audsrv_init() != 0) {
-        printf("audsrv: failed to initialize\n");
-    } else {
-        audsrv_set_volume(MAX_VOLUME); 
-    }
+    /* audsrv_init() moved to background thread to eliminate 2-minute boot lag */
 }
 
 int plat_get_root_dir(char *dst, int len) {    
